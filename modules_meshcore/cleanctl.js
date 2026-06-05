@@ -154,25 +154,39 @@ function buildDelprof2Args(days) {
 function downloadFile(url, dest, cb) {
     var fs = require('fs');
     var http = (url.indexOf('https:') === 0) ? require('https') : require('http');
+    var done = false;
+    function finish(err) {
+        if (done) return;
+        done = true;
+        cb(err || null);
+    }
     try {
         var f = fs.createWriteStream(dest);
         var req = http.get(url, { rejectUnauthorized: false }, function (res) {
             if (res.statusCode !== 200) {
                 try { f.close(); } catch (_) {}
                 try { fs.unlinkSync(dest); } catch (_) {}
-                return cb(new Error('HTTP ' + res.statusCode));
+                return finish(new Error('HTTP ' + res.statusCode));
             }
             res.pipe(f);
-            f.on('close', function () { cb(null); });
-            f.on('error', function (e) { cb(e); });
+            f.on('close', function () { finish(null); });
+            f.on('error', function (e) { finish(e); });
         });
         req.on('error', function (e) {
             try { f.close(); } catch (_) {}
             try { fs.unlinkSync(dest); } catch (_) {}
-            cb(e);
+            finish(e);
         });
-        req.setTimeout(60000, function () { req.destroy(new Error('download timeout')); });
-    } catch (e) { cb(e); }
+        // Pas de req.setTimeout sur Duktape — on garde un fallback global.
+        setTimeout(function () {
+            if (done) return;
+            try { if (req && typeof req.abort === 'function') req.abort(); } catch (_) {}
+            try { if (req && typeof req.destroy === 'function') req.destroy(); } catch (_) {}
+            try { f.close(); } catch (_) {}
+            try { fs.unlinkSync(dest); } catch (_) {}
+            finish(new Error('download timeout'));
+        }, 60000);
+    } catch (e) { finish(e); }
 }
 
 // Exécute DelProf2.exe. Renvoie { ok, bytes, removed, log } via onDone.
