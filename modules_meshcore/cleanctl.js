@@ -134,9 +134,13 @@ var PS_DISM = ''
 
 // Liste des comptes à PRÉSERVER, passée à DelProf2 via /ed:<name> (multi-OK).
 // Le pattern accepte * comme wildcard. Doublons avec accents FR couverts ici.
+// Noms passés à DelProf2 via /ed:. Pas d'espace ni de chevron — DelProf2
+// retraite l'arg comme inconnu si on perd le quoting. "All Users" et
+// "Default User" n'existent plus comme profils sur Windows >= Vista,
+// inutile de les exclure.
 var PROFILE_SKIP = [
     'Administrator', 'Administrateur', 'admin',
-    'Default*', 'Public', 'All Users',
+    'Default*', 'Public',
     'DefaultAppPool', 'IUSR', 'IWAM',
     'systemprofile', 'LocalService', 'NetworkService',
     'defaultuser0', 'WDAGUtilityAccount',
