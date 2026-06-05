@@ -15,9 +15,27 @@ const crypto = require('crypto');
 
 const HISTORY_MAX = 200;
 const RUN_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+const DOWNLOAD_TTL_MS = 30 * 60 * 1000; // 30 min
 
 // dispatchId -> { runId, nodeId, expires }
 const pendingDispatches = {};
+// token -> { kind:'delprof2', expires }
+const downloadTokens = {};
+// baseUrl appris à la première requête admin (http(s)://host)
+const serverState = { baseUrl: '' };
+
+function newDownloadToken(kind) {
+    const t = crypto.randomBytes(24).toString('hex');
+    downloadTokens[t] = { kind: kind, expires: Date.now() + DOWNLOAD_TTL_MS };
+    return t;
+}
+function consumeDownloadToken(t) {
+    const e = downloadTokens[t];
+    if (!e) return null;
+    if (e.expires < Date.now()) { delete downloadTokens[t]; return null; }
+    delete downloadTokens[t];
+    return e;
+}
 // runId -> { id, timestamp, user, tasks, profileDays, nodes:[{id,name}], results:{ nodeId: { status, tasks, totalBytes, time } } }
 const runs = {};
 
@@ -138,8 +156,44 @@ module.exports.cleanctl = function (parent) {
         }
     };
 
+    obj.server_startup = function () {
+        const ws = obj.meshServer && obj.meshServer.webserver;
+        const app = ws && ws.app;
+        if (!app || typeof app.get !== 'function') {
+            console.log('cleanctl: webserver.app inaccessible — downloads HTTP indisponibles');
+            return;
+        }
+        app.get('/cleanctl-download/delprof2/:token', (req, res) => {
+            try {
+                const token = String(req.params.token || '');
+                const entry = consumeDownloadToken(token);
+                if (!entry || entry.kind !== 'delprof2') {
+                    return res.status(403).set('Content-Type', 'text/plain').send('forbidden');
+                }
+                const bin = path.join(__dirname, 'bin', 'DelProf2.exe');
+                if (!fs.existsSync(bin)) {
+                    console.log('cleanctl: DelProf2.exe absent à ' + bin);
+                    return res.status(404).set('Content-Type', 'text/plain').send('DelProf2.exe non déployé sur le serveur');
+                }
+                const stat = fs.statSync(bin);
+                res.set('Content-Type', 'application/octet-stream');
+                res.set('Content-Length', stat.size);
+                res.set('Content-Disposition', 'attachment; filename="DelProf2.exe"');
+                fs.createReadStream(bin).pipe(res);
+            } catch (e) { res.status(500).send(e.message); }
+        });
+        console.log('cleanctl: endpoint /cleanctl-download/delprof2/:token enregistré');
+    };
+
     obj.handleAdminReq = function (req, res, user) {
         const action = (req.query && req.query.action) || '';
+
+        // Capture baseUrl la première fois qu'un admin charge le plugin —
+        // sert à fabriquer les URLs envoyées aux agents pour le download.
+        if (!serverState.baseUrl && req && req.headers && req.headers.host) {
+            const proto = (req.headers['x-forwarded-proto'] || (req.connection && req.connection.encrypted ? 'https' : 'http'));
+            serverState.baseUrl = proto + '://' + req.headers.host;
+        }
 
         if (action === 'ping') {
             return sendJson(res, 200, { ok: true, runs: Object.keys(runs).length });
@@ -187,12 +241,17 @@ module.exports.cleanctl = function (parent) {
                 }
                 const did = crypto.randomBytes(16).toString('hex');
                 pendingDispatches[did] = { runId: runId, nodeId: nid, expires: Date.now() + RUN_TTL_MS };
+                let delprof2Url = '';
+                if (tasks.indexOf('profiles') >= 0 && serverState.baseUrl) {
+                    delprof2Url = serverState.baseUrl + '/cleanctl-download/delprof2/' + newDownloadToken('delprof2');
+                }
                 try {
                     ws.send(JSON.stringify({
                         action: 'plugin', plugin: 'cleanctl', pluginaction: 'clean',
                         dispatchId: did,
                         tasks: tasks,
                         profileDays: profileDays,
+                        delprof2Url: delprof2Url,
                     }));
                     run.results[nid] = { status: 'running', tasks: {}, totalBytes: 0, time: Date.now() };
                     dispatched.push(nid);

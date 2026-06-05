@@ -132,36 +132,86 @@ var PS_DISM = ''
     + 'if ($freed -lt 0) { $freed = 0 }'
     + 'Write-Host ("RESULT:" + $freed + ":ok")';
 
-function PS_PROFILES(days) {
-    return ''
-    + '$ErrorActionPreference = "SilentlyContinue";'
-    + '$days = ' + (parseInt(days, 10) || 90) + ';'
-    + '$cutoff = (Get-Date).AddDays(-$days);'
-    + '$skip = @("Administrator","Administrateur","admin","Default","Default User","DefaultAppPool","Public","All Users","systemprofile","LocalService","NetworkService","defaultuser0","maintenance","WDAGUtilityAccount","IUSR","IWAM");'
-    + '$before = (Get-PSDrive C).Free;'
-    + '$removed = 0;'
-    + 'Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue | Where-Object {'
-    + '  -not $_.Special -and -not $_.Loaded -and $_.LocalPath -and '
-    + '  ($_.SID -notlike "S-1-5-18*") -and ($_.SID -notlike "S-1-5-19*") -and ($_.SID -notlike "S-1-5-20*") -and ($_.SID -notlike "S-1-5-80*") -and ($_.SID -notlike "S-1-5-82*") -and '
-    + '  ($skip -notcontains (Split-Path $_.LocalPath -Leaf))'
-    + '} | ForEach-Object {'
-    + '  $p = $_;'
-    + '  $lu = $null;'
-    + '  try { $lu = $p.LastUseTime } catch {}'
-    + '  if (-not $lu) {'
-    + '    try { $lu = (Get-Item $p.LocalPath -ErrorAction SilentlyContinue).LastWriteTime } catch {}'
-    + '  }'
-    + '  if ($lu -and $lu -lt $cutoff) {'
-    + '    Write-Host ("removing: " + $p.LocalPath + " (last: " + $lu + ")");'
-    + '    try { Remove-CimInstance -InputObject $p -ErrorAction Stop; $removed++ }'
-    + '    catch { Write-Host ("fail: " + $_.Exception.Message) }'
-    + '  }'
-    + '}'
-    + 'Write-Host ("profiles removed: " + $removed);'
-    + '$after = (Get-PSDrive C).Free;'
-    + '$freed = $after - $before;'
-    + 'if ($freed -lt 0) { $freed = 0 }'
-    + 'Write-Host ("RESULT:" + $freed + ":" + $removed)';
+// Liste des comptes à PRÉSERVER, passée à DelProf2 via /ed:<name> (multi-OK).
+// Le pattern accepte * comme wildcard. Doublons avec accents FR couverts ici.
+var PROFILE_SKIP = [
+    'Administrator', 'Administrateur', 'admin',
+    'Default*', 'Public', 'All Users',
+    'DefaultAppPool', 'IUSR', 'IWAM',
+    'systemprofile', 'LocalService', 'NetworkService',
+    'defaultuser0', 'WDAGUtilityAccount',
+    'maintenance'
+];
+
+function buildDelprof2Args(days) {
+    var args = ['/u', '/i', '/d:' + (parseInt(days, 10) || 90)];
+    for (var i = 0; i < PROFILE_SKIP.length; i++) {
+        args.push('/ed:' + PROFILE_SKIP[i]);
+    }
+    return args;
+}
+
+function downloadFile(url, dest, cb) {
+    var fs = require('fs');
+    var http = (url.indexOf('https:') === 0) ? require('https') : require('http');
+    try {
+        var f = fs.createWriteStream(dest);
+        var req = http.get(url, { rejectUnauthorized: false }, function (res) {
+            if (res.statusCode !== 200) {
+                try { f.close(); } catch (_) {}
+                try { fs.unlinkSync(dest); } catch (_) {}
+                return cb(new Error('HTTP ' + res.statusCode));
+            }
+            res.pipe(f);
+            f.on('close', function () { cb(null); });
+            f.on('error', function (e) { cb(e); });
+        });
+        req.on('error', function (e) {
+            try { f.close(); } catch (_) {}
+            try { fs.unlinkSync(dest); } catch (_) {}
+            cb(e);
+        });
+        req.setTimeout(60000, function () { req.destroy(new Error('download timeout')); });
+    } catch (e) { cb(e); }
+}
+
+// Exécute DelProf2.exe. Renvoie { ok, bytes, removed, log } via onDone.
+function runDelprof2(exePath, days, timeoutMs, onDone) {
+    var fs = require('fs');
+    var cp = require('child_process');
+    var log = '';
+    var done = false;
+    // Capacité disque avant (via PowerShell — DelProf2 ne renvoie pas la taille).
+    var psExe = (process.env.SystemRoot || 'C:\\Windows') + '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+    cp.execFile(psExe, ['-NoProfile', '-Command', '(Get-PSDrive C).Free'], function (err, stdout) {
+        var before = parseInt((stdout || '').trim(), 10) || 0;
+        var child;
+        try {
+            child = cp.execFile(exePath, buildDelprof2Args(days));
+        } catch (e) { return onDone(false, 0, 0, 'spawn DelProf2 failed: ' + e); }
+
+        if (child.stdout) child.stdout.on('data', function (d) { log += d.toString(); });
+        if (child.stderr) child.stderr.on('data', function (d) { log += d.toString(); });
+
+        function finish(ok, errMsg) {
+            if (done) return;
+            done = true;
+            cp.execFile(psExe, ['-NoProfile', '-Command', '(Get-PSDrive C).Free'], function (err2, stdout2) {
+                var after = parseInt((stdout2 || '').trim(), 10) || 0;
+                var freed = after - before;
+                if (freed < 0) freed = 0;
+                // DelProf2 trace "Deleted profile: ..." par compte supprimé.
+                var removed = (log.match(/Deleted profile:/gi) || []).length;
+                onDone(ok, freed, removed, log + (errMsg ? '\n' + errMsg : ''));
+            });
+        }
+        child.on('exit', function () { finish(true, ''); });
+        setTimeout(function () {
+            if (done) return;
+            try { child.kill(); } catch (_) {}
+            finish(false, 'DelProf2 timeout');
+        }, timeoutMs);
+    });
 }
 
 function runPowerShell(script, timeoutMs, onDone) {
@@ -217,6 +267,29 @@ function runPowerShell(script, timeoutMs, onDone) {
     }, timeoutMs);
 }
 
+function doProfilesTask(data, profileDays, cb) {
+    var fs = require('fs');
+    var tmpRoot = (process.env.TEMP || process.env.TMP || 'C:\\Windows\\Temp');
+    var exePath = tmpRoot + '\\cleanctl_DelProf2.exe';
+    var url = data.delprof2Url || '';
+    if (!url) return cb(false, 0, 0, 'delprof2Url manquant — serveur n\'a pas envoyé l\'URL (baseUrl pas encore captée ?)');
+
+    function runIt() {
+        runDelprof2(exePath, profileDays, 30 * 60 * 1000, function (ok, freed, removed, log) {
+            cb(ok, freed, removed, log);
+        });
+    }
+
+    // Re-télécharge à chaque run pour invalider une version vieille/corrompue,
+    // et parce que le token est single-shot côté serveur.
+    try { if (fs.existsSync(exePath)) fs.unlinkSync(exePath); } catch (_) {}
+    downloadFile(url, exePath, function (err) {
+        if (err) return cb(false, 0, 0, 'download DelProf2 échoué: ' + err.message);
+        if (!fs.existsSync(exePath)) return cb(false, 0, 0, 'DelProf2 introuvable après download');
+        runIt();
+    });
+}
+
 function doClean(data) {
     if (process.platform !== 'win32') {
         reply({ pluginaction: 'cleanComplete', dispatchId: data.dispatchId, ok: false, error: 'cleanctl: Windows only' });
@@ -238,19 +311,28 @@ function doClean(data) {
             return;
         }
         var t = tasks[idx++];
+        if (t === 'profiles') {
+            return doProfilesTask(data, profileDays, function (ok, bytes, removed, log) {
+                var note = (removed != null) ? String(removed) : '';
+                results[t] = { ok: ok, bytes: bytes, note: note, logTail: (log || '').slice(-1500) };
+                reply({
+                    pluginaction: 'cleanProgress', dispatchId: data.dispatchId,
+                    task: t, ok: ok, bytes: bytes, note: note
+                });
+                next();
+            });
+        }
         var script = '', timeout = 5 * 60 * 1000;
         switch (t) {
             case 'temp':     script = PS_TEMP; break;
             case 'browser':  script = PS_BROWSER; timeout = 10 * 60 * 1000; break;
             case 'dism':     script = PS_DISM; timeout = 30 * 60 * 1000; break;
-            case 'profiles': script = PS_PROFILES(profileDays); timeout = 30 * 60 * 1000; break;
             default:
                 results[t] = { ok: false, bytes: 0, note: 'unknown task' };
                 next(); return;
         }
         runPowerShell(script, timeout, function (ok, bytes, log, note) {
             results[t] = { ok: ok, bytes: bytes, note: note, logTail: (log || '').slice(-1500) };
-            // Progress event so the UI can show per-task ticks.
             reply({
                 pluginaction: 'cleanProgress',
                 dispatchId: data.dispatchId,
