@@ -1,7 +1,7 @@
 {
   "name": "cleanctl",
   "shortName": "cleanctl",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "author": "V3locidad",
   "description": "Nettoyage Windows centralisé via MeshCentral : %TEMP%, caches navigateurs, DISM/WinSxS/Windows.old, profils utilisateurs inactifs. Actions par poste ou en masse, remontée des Mo libérés.",
   "hasAdminPanel": true,
