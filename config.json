@@ -1,0 +1,14 @@
+{
+  "name": "cleanctl",
+  "shortName": "cleanctl",
+  "version": "0.0.1",
+  "author": "V3locidad",
+  "description": "Nettoyage Windows centralisé via MeshCentral : %TEMP%, caches navigateurs, DISM/WinSxS/Windows.old, profils utilisateurs inactifs. Actions par poste ou en masse, remontée des Mo libérés.",
+  "hasAdminPanel": true,
+  "homepage": "https://github.com/V3locidad/cleanctl-meshcentral",
+  "changelogUrl": "https://raw.githubusercontent.com/V3locidad/cleanctl-meshcentral/main/changelog.md",
+  "configUrl": "https://raw.githubusercontent.com/V3locidad/cleanctl-meshcentral/main/config.json",
+  "downloadUrl": "https://github.com/V3locidad/cleanctl-meshcentral/archive/refs/heads/main.zip",
+  "repository": { "type": "git", "url": "https://github.com/V3locidad/cleanctl-meshcentral.git" },
+  "meshCentralCompat": ">=1.1.0"
+}

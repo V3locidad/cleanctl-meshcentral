@@ -1,0 +1,296 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Clean Control</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { font-family: Segoe UI, Arial, sans-serif; font-size: 13px; padding: 10px; color: #222; box-sizing: border-box; display: flex; flex-direction: column; }
+  h2 { margin: 0 0 10px 0; font-size: 16px; flex: 0 0 auto; }
+  .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px; background: #f4f4f4; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 8px; flex: 0 0 auto; }
+  .bar input[type=text], .bar input[type=number], .bar select {
+    padding: 3px 6px; border: 1px solid #bbb; border-radius: 3px; font-size: 13px;
+  }
+  button { padding: 5px 10px; border: 1px solid #888; background: #fff; border-radius: 3px; cursor: pointer; font-size: 13px; }
+  button.primary { background: #2c7be5; color: white; border-color: #2c7be5; }
+  button.danger { background: #d9534f; color: white; border-color: #d9534f; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; background: #eee; font-size: 11px; margin-left: 6px; }
+  .cols { display: flex; gap: 10px; flex: 1 1 auto; min-height: 0; }
+  .col { flex: 1; border: 1px solid #ddd; border-radius: 4px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .col.tasks { flex: 0 0 280px; }
+  .col h3 { margin: 0; padding: 8px; background: #eee; border-bottom: 1px solid #ddd; font-size: 13px; flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+  .col h3 .spacer { flex: 1; }
+  .col .search { padding: 6px 8px; border-bottom: 1px solid #eee; flex: 0 0 auto; }
+  .col .search input { width: 100%; box-sizing: border-box; padding: 3px 6px; border: 1px solid #bbb; border-radius: 3px; font-size: 13px; }
+  .col .body { flex: 1 1 auto; overflow: auto; min-height: 0; }
+  .row { padding: 5px 10px; border-bottom: 1px solid #f0f0f0; display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .row:hover { background: #f8f8ff; }
+  .row.selected { background: #eef6ff; }
+  .row input[type=checkbox] { flex: 0 0 auto; }
+  .row .main { flex: 1; }
+  .row .main .title { font-weight: 500; }
+  .row .main .sub { color: #888; font-size: 11px; }
+  .empty { color: #aaa; font-style: italic; padding: 12px; }
+  .statusDot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; display: inline-block; box-shadow: 0 0 0 1px rgba(0,0,0,0.15); }
+  .statusDot.on  { background: #2ecc40; }
+  .statusDot.off { background: #d9534f; }
+  .badge { display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 10px; background: #e2e3e5; color: #383d41; margin-right: 4px; }
+  #runBar { margin-top: 10px; padding: 8px; background: #f4f4f4; border: 1px solid #ddd; border-radius: 4px; display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+  #runBar .info { flex: 1; }
+  .taskGroup { padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; }
+  .taskGroup label { display: flex; gap: 6px; align-items: flex-start; cursor: pointer; }
+  .taskGroup label .desc { color: #777; font-size: 11px; }
+  .results { margin-top: 10px; border: 1px solid #ddd; border-radius: 4px; max-height: 280px; overflow: auto; flex: 0 0 auto; display: none; }
+  .results table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .results th, .results td { padding: 4px 8px; border-bottom: 1px solid #f0f0f0; text-align: left; vertical-align: top; }
+  .results th { background: #f4f4f4; position: sticky; top: 0; }
+  .resCell { padding: 2px 6px; border-radius: 3px; font-size: 11px; display: inline-block; min-width: 50px; text-align: center; }
+  .resCell.ok { background: #d4edda; color: #155724; }
+  .resCell.ko { background: #f8d7da; color: #721c24; }
+  .resCell.run { background: #fff3cd; color: #856404; }
+  .resCell.off { background: #e2e3e5; color: #383d41; }
+</style>
+</head>
+<body>
+
+<h2>Clean Control — nettoyage Windows centralisé</h2>
+
+<div class="bar">
+  <button id="refreshBtn">Rafraîchir</button>
+  <span id="selCount" class="pill">0 poste(s) sélectionné(s)</span>
+  <span class="spacer" style="flex:1"></span>
+  <label>Profils inactifs depuis :
+    <input id="profileDays" type="number" value="90" min="7" max="3650" style="width:70px"> jours
+  </label>
+  <button id="runBtn" class="primary" disabled>Lancer le nettoyage</button>
+</div>
+
+<div class="cols">
+  <div class="col">
+    <h3>Postes <span id="agentsCount" class="pill">0</span><span class="spacer"></span>
+      <label style="font-weight:normal; font-size:11px">
+        <input type="checkbox" id="onlineOnly" checked> en ligne uniquement
+      </label>
+      <button id="selectAllBtn">Tout</button>
+      <button id="selectNoneBtn">Aucun</button>
+    </h3>
+    <div class="search"><input id="searchAgents" placeholder="Rechercher (nom, salle, OS)"></div>
+    <div class="body" id="agentsBody"><div class="empty">Chargement…</div></div>
+  </div>
+
+  <div class="col tasks">
+    <h3>Tâches</h3>
+    <div class="taskGroup">
+      <label><input type="checkbox" class="taskCheck" value="temp" checked>
+        <div>Fichiers temporaires<div class="desc">%TEMP%, C:\Windows\Temp, Prefetch, SoftwareDistribution\Download</div></div>
+      </label>
+      <label><input type="checkbox" class="taskCheck" value="browser" checked>
+        <div>Caches navigateurs<div class="desc">Chrome, Edge, Firefox — caches uniquement</div></div>
+      </label>
+      <label><input type="checkbox" class="taskCheck" value="dism">
+        <div>DISM / Windows.old<div class="desc">Cleanup-Image, suppression Windows.old, shadow copies anciennes (long, peut prendre 10–30 min)</div></div>
+      </label>
+      <label><input type="checkbox" class="taskCheck" value="profiles">
+        <div>Profils utilisateurs anciens<div class="desc">Profils non chargés et inactifs depuis N jours (réglable en haut). Ignore Administrator/Default/Public/maintenance.</div></div>
+      </label>
+    </div>
+  </div>
+</div>
+
+<div id="results" class="results">
+  <table>
+    <thead><tr>
+      <th>Poste</th><th>Statut</th>
+      <th>temp</th><th>browser</th><th>dism</th><th>profiles</th>
+      <th>Total libéré</th>
+    </tr></thead>
+    <tbody id="resultsBody"></tbody>
+  </table>
+</div>
+
+<script>
+var BASE = '/pluginadmin.ashx?pin=cleanctl';
+var agents = [];
+var selected = {};
+var currentRunId = null;
+var pollTimer = null;
+
+function fmtBytes(b) {
+  if (!b || b <= 0) return '—';
+  var units = ['o','Ko','Mo','Go','To'];
+  var i = 0;
+  while (b >= 1024 && i < units.length - 1) { b /= 1024; i++; }
+  return b.toFixed(b >= 100 ? 0 : (b >= 10 ? 1 : 2)) + ' ' + units[i];
+}
+
+function getJson(url) {
+  return new Promise(function (res, rej) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.onload = function () {
+      try { res(JSON.parse(xhr.responseText)); }
+      catch (e) { rej(new Error('réponse invalide: ' + xhr.responseText.slice(0, 200))); }
+    };
+    xhr.onerror = function () { rej(new Error('réseau')); };
+    xhr.send();
+  });
+}
+
+function refreshAgents() {
+  return getJson(BASE + '&action=agents').then(function (data) {
+    agents = data.agents || [];
+    renderAgents();
+  }).catch(function (e) {
+    document.getElementById('agentsBody').innerHTML = '<div class="empty">Erreur: ' + e.message + '</div>';
+  });
+}
+
+function renderAgents() {
+  var onlineOnly = document.getElementById('onlineOnly').checked;
+  var q = (document.getElementById('searchAgents').value || '').toLowerCase();
+  var filtered = agents.filter(function (a) {
+    if (onlineOnly && !a.online) return false;
+    if (a.family && a.family !== 'Windows') return false;  // cleanctl Windows-only
+    if (!q) return true;
+    return (a.name || '').toLowerCase().indexOf(q) >= 0
+      || (a.mesh || '').toLowerCase().indexOf(q) >= 0
+      || (a.os || '').toLowerCase().indexOf(q) >= 0;
+  });
+  var body = document.getElementById('agentsBody');
+  document.getElementById('agentsCount').textContent = filtered.length + ' / ' + agents.length;
+  if (!filtered.length) { body.innerHTML = '<div class="empty">Aucun poste.</div>'; return; }
+  var html = '';
+  filtered.forEach(function (a) {
+    var sel = !!selected[a.id];
+    html += '<div class="row' + (sel ? ' selected' : '') + '" data-id="' + a.id + '">'
+      + '<input type="checkbox" ' + (sel ? 'checked' : '') + '>'
+      + '<span class="statusDot ' + (a.online ? 'on' : 'off') + '" title="' + (a.online ? 'en ligne' : 'hors ligne') + '"></span>'
+      + '<div class="main">'
+      + '<div class="title">' + escapeHtml(a.name) + '</div>'
+      + '<div class="sub"><span class="badge">' + escapeHtml(a.mesh || '?') + '</span>'
+      + '<span class="badge">' + escapeHtml(a.family || a.os || '?') + '</span></div>'
+      + '</div></div>';
+  });
+  body.innerHTML = html;
+  Array.prototype.forEach.call(body.querySelectorAll('.row'), function (row) {
+    row.addEventListener('click', function (e) {
+      var id = row.getAttribute('data-id');
+      selected[id] = !selected[id];
+      if (!selected[id]) delete selected[id];
+      updateSelCount();
+      renderAgents();
+    });
+  });
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+
+function updateSelCount() {
+  var n = Object.keys(selected).length;
+  document.getElementById('selCount').textContent = n + ' poste(s) sélectionné(s)';
+  document.getElementById('runBtn').disabled = !n;
+}
+
+function selectedTasks() {
+  return Array.prototype.filter.call(
+    document.querySelectorAll('.taskCheck'),
+    function (c) { return c.checked; }
+  ).map(function (c) { return c.value; });
+}
+
+function runClean() {
+  var nodes = Object.keys(selected);
+  var tasks = selectedTasks();
+  if (!nodes.length || !tasks.length) return;
+  var profileDays = parseInt(document.getElementById('profileDays').value, 10) || 90;
+  var confirmMsg = 'Lancer ' + tasks.join(', ') + ' sur ' + nodes.length + ' poste(s) ?'
+    + (tasks.indexOf('profiles') >= 0 ? '\n\nProfils inactifs depuis ' + profileDays + ' jours seront SUPPRIMÉS.' : '')
+    + (tasks.indexOf('dism') >= 0 ? '\n\nDISM peut prendre 10–30 min par poste.' : '');
+  if (!window.confirm(confirmMsg)) return;
+  var payload = JSON.stringify({ nodes: nodes, tasks: tasks, profileDays: profileDays });
+  getJson(BASE + '&action=run&payload=' + encodeURIComponent(payload)).then(function (r) {
+    if (r.error) { alert('Erreur: ' + r.error); return; }
+    currentRunId = r.runId;
+    document.getElementById('results').style.display = 'block';
+    pollRun();
+  }).catch(function (e) { alert('Erreur: ' + e.message); });
+}
+
+function pollRun() {
+  if (!currentRunId) return;
+  getJson(BASE + '&action=runStatus&runId=' + encodeURIComponent(currentRunId)).then(function (run) {
+    renderResults(run);
+    var allDone = Object.values(run.results).every(function (r) {
+      return r.status === 'done' || r.status === 'error' || r.status === 'offline';
+    });
+    if (!allDone) {
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(pollRun, 3000);
+    }
+  }).catch(function () {
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(pollRun, 5000);
+  });
+}
+
+function renderResults(run) {
+  var tbody = document.getElementById('resultsBody');
+  var rows = '';
+  var byId = {};
+  agents.forEach(function (a) { byId[a.id] = a; });
+  Object.keys(run.results).forEach(function (nid) {
+    var r = run.results[nid];
+    var name = (byId[nid] && byId[nid].name) || nid.slice(0, 12);
+    var tasks = r.tasks || {};
+    function cell(k) {
+      var t = tasks[k];
+      if (!t && r.status === 'running') return '<span class="resCell run">…</span>';
+      if (!t) return '<span class="resCell off">—</span>';
+      var cls = t.ok ? 'ok' : 'ko';
+      return '<span class="resCell ' + cls + '">' + fmtBytes(t.bytes) + '</span>';
+    }
+    var statusCell;
+    if (r.status === 'running') statusCell = '<span class="resCell run">en cours</span>';
+    else if (r.status === 'done') statusCell = '<span class="resCell ok">terminé</span>';
+    else if (r.status === 'offline') statusCell = '<span class="resCell off">offline</span>';
+    else statusCell = '<span class="resCell ko">erreur</span>';
+    rows += '<tr><td>' + escapeHtml(name) + '</td><td>' + statusCell + '</td>'
+      + '<td>' + cell('temp') + '</td>'
+      + '<td>' + cell('browser') + '</td>'
+      + '<td>' + cell('dism') + '</td>'
+      + '<td>' + cell('profiles') + '</td>'
+      + '<td><b>' + fmtBytes(r.totalBytes) + '</b></td></tr>';
+  });
+  tbody.innerHTML = rows;
+}
+
+document.getElementById('refreshBtn').addEventListener('click', refreshAgents);
+document.getElementById('runBtn').addEventListener('click', runClean);
+document.getElementById('selectAllBtn').addEventListener('click', function () {
+  var onlineOnly = document.getElementById('onlineOnly').checked;
+  var q = (document.getElementById('searchAgents').value || '').toLowerCase();
+  agents.forEach(function (a) {
+    if (onlineOnly && !a.online) return;
+    if (a.family && a.family !== 'Windows') return;
+    if (q && (a.name || '').toLowerCase().indexOf(q) < 0
+      && (a.mesh || '').toLowerCase().indexOf(q) < 0) return;
+    selected[a.id] = true;
+  });
+  updateSelCount(); renderAgents();
+});
+document.getElementById('selectNoneBtn').addEventListener('click', function () {
+  selected = {}; updateSelCount(); renderAgents();
+});
+document.getElementById('searchAgents').addEventListener('input', renderAgents);
+document.getElementById('onlineOnly').addEventListener('change', renderAgents);
+
+refreshAgents();
+</script>
+
+</body>
+</html>
