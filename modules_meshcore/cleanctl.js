@@ -151,42 +151,56 @@ function buildDelprof2Args(days) {
     return args;
 }
 
+// Download via PowerShell pour bypasser le certificat auto-signé de MC
+// (la stack TLS de Duktape ignore rejectUnauthorized et plante au handshake).
 function downloadFile(url, dest, cb) {
     var fs = require('fs');
-    var http = (url.indexOf('https:') === 0) ? require('https') : require('http');
+    var cp = require('child_process');
     var done = false;
     function finish(err) {
         if (done) return;
         done = true;
         cb(err || null);
     }
+    var psExe = (process.env.SystemRoot || 'C:\\Windows') + '\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+    var script = ''
+        + 'try {'
+        + '  [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls11 -bor [System.Net.SecurityProtocolType]::Tls;'
+        + '  [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true };'
+        + '  $wc = New-Object System.Net.WebClient;'
+        + '  $wc.DownloadFile(\'' + url.replace(/'/g, "''") + '\', \'' + dest.replace(/'/g, "''") + '\');'
+        + '  Write-Host "OK";'
+        + '} catch { Write-Host ("ERR: " + $_.Exception.Message); exit 1 }';
+    var ps1 = dest + '.dl.ps1';
+    try { fs.writeFileSync(ps1, script); }
+    catch (e) { return finish(new Error('write ps1: ' + e)); }
+    var child;
     try {
-        var f = fs.createWriteStream(dest);
-        var req = http.get(url, { rejectUnauthorized: false }, function (res) {
-            if (res.statusCode !== 200) {
-                try { f.close(); } catch (_) {}
-                try { fs.unlinkSync(dest); } catch (_) {}
-                return finish(new Error('HTTP ' + res.statusCode));
-            }
-            res.pipe(f);
-            f.on('close', function () { finish(null); });
-            f.on('error', function (e) { finish(e); });
-        });
-        req.on('error', function (e) {
-            try { f.close(); } catch (_) {}
+        child = cp.execFile(psExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-NonInteractive', '-File', ps1]);
+    } catch (e) {
+        try { fs.unlinkSync(ps1); } catch (_) {}
+        return finish(new Error('spawn ps download: ' + e));
+    }
+    var log = '';
+    if (child.stdout) child.stdout.on('data', function (d) { log += d.toString(); });
+    if (child.stderr) child.stderr.on('data', function (d) { log += d.toString(); });
+    child.on('exit', function () {
+        try { fs.unlinkSync(ps1); } catch (_) {}
+        if (!fs.existsSync(dest)) return finish(new Error('download failed: ' + log.trim()));
+        var st;
+        try { st = fs.statSync(dest); } catch (_) { return finish(new Error('stat dest failed')); }
+        if (!st.size) {
             try { fs.unlinkSync(dest); } catch (_) {}
-            finish(e);
-        });
-        // Pas de req.setTimeout sur Duktape — on garde un fallback global.
-        setTimeout(function () {
-            if (done) return;
-            try { if (req && typeof req.abort === 'function') req.abort(); } catch (_) {}
-            try { if (req && typeof req.destroy === 'function') req.destroy(); } catch (_) {}
-            try { f.close(); } catch (_) {}
-            try { fs.unlinkSync(dest); } catch (_) {}
-            finish(new Error('download timeout'));
-        }, 60000);
-    } catch (e) { finish(e); }
+            return finish(new Error('downloaded file empty: ' + log.trim()));
+        }
+        finish(null);
+    });
+    setTimeout(function () {
+        if (done) return;
+        try { child.kill(); } catch (_) {}
+        try { fs.unlinkSync(ps1); } catch (_) {}
+        finish(new Error('download timeout'));
+    }, 60000);
 }
 
 // Exécute DelProf2.exe. Renvoie { ok, bytes, removed, log } via onDone.
